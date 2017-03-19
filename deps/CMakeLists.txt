@@ -6,6 +6,7 @@ endif()
 add_subdirectory(glad)
 add_subdirectory(ipc-util)
 add_subdirectory(libff)
+add_subdirectory(libff2)
 add_subdirectory(file-updater)
 
 if(WIN32)

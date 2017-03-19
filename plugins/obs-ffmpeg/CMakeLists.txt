@@ -26,7 +26,7 @@ add_library(obs-ffmpeg MODULE
 	${obs-ffmpeg_SOURCES})
 target_link_libraries(obs-ffmpeg
 	libobs
-	libff
+	libff2
 	${obs-ffmpeg_PLATFORM_DEPS}
 	${FFMPEG_LIBRARIES})
 

@@ -53,6 +53,15 @@ static inline void pthread_mutex_init_value(pthread_mutex_t *mutex)
 	*mutex = init_val;
 }
 
+static inline void pthread_cond_init_value(pthread_cond_t *cond)
+{
+	pthread_cond_t init_val = PTHREAD_COND_INITIALIZER;
+	if (!cond)
+		return;
+
+	*cond = init_val;
+}
+
 enum os_event_type {
 	OS_EVENT_TYPE_AUTO,
 	OS_EVENT_TYPE_MANUAL
