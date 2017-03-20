@@ -294,6 +294,12 @@ static void get_frame(void *opaque, struct obs_source_frame *f)
 	obs_source_output_video(s->source, f);
 }
 
+static void preload_frame(void *opaque, struct obs_source_frame *f)
+{
+	struct ffmpeg_source *s = opaque;
+	obs_source_preload_video(s->source, f);
+}
+
 static void get_audio(void *opaque, struct obs_source_audio *a)
 {
 	struct ffmpeg_source *s = opaque;
@@ -309,8 +315,10 @@ static void media_stopped(void *opaque)
 
 static void ffmpeg_source_start(struct ffmpeg_source *s)
 {
-	if (s->media_valid)
-		ff2_media_play(&s->media, false);
+	if (s->media_valid) {
+		ff2_media_play(&s->media, s->is_looping);
+		obs_source_show_preloaded_video(s->source);
+	}
 }
 
 static void ffmpeg_source_update(void *data, obs_data_t *settings)
@@ -386,7 +394,8 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 
 	if (s->input && *s->input)
 		s->media_valid = ff2_media_init(&s->media, s->input,
-				s, get_frame, get_audio, media_stopped);
+				s, get_frame, get_audio, media_stopped,
+				preload_frame);
 
 	dump_source_info(s, input, input_format, is_advanced);
 	if (!s->restart_on_activate || obs_source_active(s->source))

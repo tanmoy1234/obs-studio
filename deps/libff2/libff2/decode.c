@@ -20,35 +20,41 @@
 
 extern bool ff2_decode_init(ff2_media_t *m, enum AVMediaType type)
 {
-	struct ff2_decode *decode = type == AVMEDIA_TYPE_VIDEO ? &m->v : &m->a;
+	struct ff2_decode *d = type == AVMEDIA_TYPE_VIDEO ? &m->v : &m->a;
 	AVStream *stream;
 	int ret;
 
-	memset(decode, 0, sizeof(*decode));
-	decode->m = m;
-	decode->audio = type == AVMEDIA_TYPE_AUDIO;
+	memset(d, 0, sizeof(*d));
+	d->m = m;
+	d->audio = type == AVMEDIA_TYPE_AUDIO;
 
 	ret = av_find_best_stream(m->fmt, type, -1, -1, NULL, 0);
 	if (ret < 0)
 		return false;
-	stream = decode->stream = m->fmt->streams[ret];
+	stream = d->stream = m->fmt->streams[ret];
 
-	decode->codec = avcodec_find_decoder(stream->codecpar->codec_id);
-	if (!decode->codec) {
+	if (stream->codecpar->codec_id == AV_CODEC_ID_VP8)
+		d->codec = avcodec_find_decoder_by_name("libvpx");
+	else if (stream->codecpar->codec_id == AV_CODEC_ID_VP9)
+		d->codec = avcodec_find_decoder_by_name("libvpx-vp9");
+
+	if (!d->codec)
+		d->codec = avcodec_find_decoder(stream->codecpar->codec_id);
+	if (!d->codec) {
 		blog(LOG_WARNING, "FF2: Failed to find %s codec",
 				av_get_media_type_string(type));
 		return false;
 	}
 
-	decode->decoder = avcodec_alloc_context3(decode->codec);
-	if (!decode->decoder) {
+	d->decoder = avcodec_alloc_context3(d->codec);
+	if (!d->decoder) {
 		blog(LOG_WARNING, "FF2: Failed to allocate %s context",
 				av_get_media_type_string(type));
 		return false;
 	}
 
-	ret = avcodec_parameters_to_context(decode->decoder,
-			decode->stream->codecpar);
+	ret = avcodec_parameters_to_context(d->decoder,
+			d->stream->codecpar);
 	if (ret < 0) {
 		blog(LOG_WARNING, "FF2: Failed to copy %s codec params: %s",
 				av_get_media_type_string(type),
@@ -56,9 +62,9 @@ extern bool ff2_decode_init(ff2_media_t *m, enum AVMediaType type)
 		return false;
 	}
 
-	decode->decoder->thread_count = 0;
+	d->decoder->thread_count = 0;
 
-	ret = avcodec_open2(decode->decoder, decode->codec, NULL);
+	ret = avcodec_open2(d->decoder, d->codec, NULL);
 	if (ret < 0) {
 		blog(LOG_WARNING, "FF2: Failed to open %s decoder: %s",
 				av_get_media_type_string(type),
@@ -66,15 +72,15 @@ extern bool ff2_decode_init(ff2_media_t *m, enum AVMediaType type)
 		return false;
 	}
 
-	decode->frame = av_frame_alloc();
-	if (!decode->frame) {
+	d->frame = av_frame_alloc();
+	if (!d->frame) {
 		blog(LOG_WARNING, "FF2: Failed to allocate %s frame",
 				av_get_media_type_string(type));
 		return -1;
 	}
 
-	if (decode->codec->capabilities & CODEC_CAP_TRUNCATED)
-		decode->decoder->flags |= CODEC_FLAG_TRUNCATED;
+	if (d->codec->capabilities & CODEC_CAP_TRUNCATED)
+		d->decoder->flags |= CODEC_FLAG_TRUNCATED;
 	return true;
 }
 
@@ -136,23 +142,30 @@ static inline int64_t get_estimated_duration(struct ff2_decode *d,
 
 bool ff2_decode_next(struct ff2_decode *d)
 {
+	bool eof = d->m->eof;
 	int got_frame;
 	int ret;
 
 	d->frame_ready = false;
 
-	if (!d->packets.size)
+	if (!eof && !d->packets.size)
 		return true;
 
 	while (!d->frame_ready) {
 		if (!d->packet_pending) {
-			if (!d->packets.size)
-				return true;
-
-			circlebuf_pop_front(&d->packets, &d->orig_pkt,
-					sizeof(d->orig_pkt));
-			d->pkt = d->orig_pkt;
-			d->packet_pending = true;
+			if (!d->packets.size) {
+				if (eof) {
+					d->pkt.data = NULL;
+					d->pkt.size = 0;
+				} else {
+					return true;
+				}
+			} else {
+				circlebuf_pop_front(&d->packets, &d->orig_pkt,
+						sizeof(d->orig_pkt));
+				d->pkt = d->orig_pkt;
+				d->packet_pending = true;
+			}
 		}
 
 		if (d->audio)
@@ -161,6 +174,10 @@ bool ff2_decode_next(struct ff2_decode *d)
 		else
 			ret = avcodec_decode_video2(d->decoder,
 					d->frame, &got_frame, &d->pkt);
+		if (!got_frame && ret == 0) {
+			d->eof = true;
+			return true;
+		}
 		if (ret < 0) {
 			blog(LOG_WARNING, "FF2: decode failed: %s",
 					av_err2str(ret));
@@ -169,8 +186,10 @@ bool ff2_decode_next(struct ff2_decode *d)
 
 		d->frame_ready = !!got_frame;
 
-		d->pkt.data += ret;
-		d->pkt.size -= ret;
+		if (d->pkt.size) {
+			d->pkt.data += ret;
+			d->pkt.size -= ret;
+		}
 
 		if (d->pkt.size == 0) {
 			av_packet_unref(&d->orig_pkt);

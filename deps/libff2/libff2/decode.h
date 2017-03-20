@@ -53,6 +53,7 @@ struct ff2_decode {
 	int64_t               next_pts;
 	AVFrame               *frame;
 	bool                  frame_ready;
+	bool                  eof;
 
 	AVPacket              orig_pkt;
 	AVPacket              pkt;
