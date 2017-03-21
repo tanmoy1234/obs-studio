@@ -57,11 +57,9 @@ static inline enum video_range_type convert_color_range(enum AVColorRange r)
 static inline struct ff2_decode *get_packet_decoder(ff2_media_t *media,
 		AVPacket *pkt)
 {
-	if (media->has_audio &&
-	    (!media->has_video || pkt->stream_index == media->a.stream->index))
+	if (media->has_audio && pkt->stream_index == media->a.stream->index)
 		return &media->a;
-
-	if (pkt->stream_index == media->v.stream->index)
+	if (media->has_video && pkt->stream_index == media->v.stream->index)
 		return &media->v;
 
 	return NULL;
