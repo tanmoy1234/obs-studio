@@ -62,7 +62,13 @@ extern bool ff2_decode_init(ff2_media_t *m, enum AVMediaType type)
 		return false;
 	}
 
-	d->decoder->thread_count = 0;
+	if (d->decoder->thread_count == 1 &&
+	    d->decoder->codec_id != AV_CODEC_ID_PNG &&
+	    d->decoder->codec_id != AV_CODEC_ID_TIFF &&
+	    d->decoder->codec_id != AV_CODEC_ID_JPEG2000 &&
+	    d->decoder->codec_id != AV_CODEC_ID_MPEG4 &&
+	    d->decoder->codec_id != AV_CODEC_ID_WEBP)
+		d->decoder->thread_count = 0;
 
 	ret = avcodec_open2(d->decoder, d->codec, NULL);
 	if (ret < 0) {
