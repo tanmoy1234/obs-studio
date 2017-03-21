@@ -192,14 +192,18 @@ bool ff2_decode_next(struct ff2_decode *d)
 
 		d->frame_ready = !!got_frame;
 
-		if (d->pkt.size) {
-			d->pkt.data += ret;
-			d->pkt.size -= ret;
-		}
+		if (d->packet_pending) {
+			if (d->pkt.size) {
+				d->pkt.data += ret;
+				d->pkt.size -= ret;
+			}
 
-		if (d->pkt.size == 0) {
-			av_packet_unref(&d->orig_pkt);
-			d->packet_pending = false;
+			if (d->pkt.size == 0) {
+				av_packet_unref(&d->orig_pkt);
+				av_init_packet(&d->orig_pkt);
+				av_init_packet(&d->pkt);
+				d->packet_pending = false;
+			}
 		}
 	}
 
