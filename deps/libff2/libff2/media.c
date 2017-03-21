@@ -67,8 +67,10 @@ static inline struct ff2_decode *get_packet_decoder(ff2_media_t *media,
 
 static int ff2_media_next_packet(ff2_media_t *media)
 {
+	AVPacket new_pkt;
 	AVPacket pkt;
 	av_init_packet(&pkt);
+	new_pkt = pkt;
 
 	int ret = av_read_frame(media->fmt, &pkt);
 	if (ret < 0) {
@@ -78,13 +80,12 @@ static int ff2_media_next_packet(ff2_media_t *media)
 	}
 
 	struct ff2_decode *d = get_packet_decoder(media, &pkt);
-	if (d && !ff2_decode_push_packet(d, &pkt)) {
-		blog(LOG_WARNING, "FF2: failed to push packet");
-		return -1;
+	if (d && pkt.size) {
+		av_packet_ref(&new_pkt, &pkt);
+		ff2_decode_push_packet(d, &new_pkt);
 	}
-	if (!d)
-		av_packet_unref(&pkt);
 
+	av_packet_unref(&pkt);
 	return ret;
 }
 
