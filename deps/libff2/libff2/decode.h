@@ -60,12 +60,12 @@ struct ff2_decode {
 	struct circlebuf      packets;
 };
 
-extern bool ff2_decode_init(ff2_media_t *media, enum AVMediaType type);
+extern bool ff2_decode_init(ff2_media_t *media, enum AVMediaType type, bool hw);
 extern void ff2_decode_free(struct ff2_decode *decode);
 
 extern void ff2_decode_clear_packets(struct ff2_decode *decode);
 
-extern bool ff2_decode_push_packet(struct ff2_decode *decode, AVPacket *pkt);
+extern void ff2_decode_push_packet(struct ff2_decode *decode, AVPacket *pkt);
 extern bool ff2_decode_next(struct ff2_decode *decode);
 
 #ifdef __cplusplus

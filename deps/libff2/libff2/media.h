@@ -58,6 +58,7 @@ struct ff2_media {
 
 	struct ff2_decode v;
 	struct ff2_decode a;
+	bool is_network;
 	bool has_video;
 	bool has_audio;
 	bool is_file;
@@ -66,6 +67,7 @@ struct ff2_media {
 	struct obs_source_frame obsframe;
 	enum video_colorspace cur_space;
 	enum video_range_type cur_range;
+	enum video_range_type force_range;
 
 	int64_t play_sys_ts;
 	int64_t next_pts_ns;
@@ -87,9 +89,16 @@ struct ff2_media {
 
 typedef struct ff2_media ff2_media_t;
 
-extern bool ff2_media_init(ff2_media_t *media, const char *path,
-		void *opaque, ff2_video_cb v_cb, ff2_audio_cb a_cb,
-		ff2_stop_cb stop_cb, ff2_video_cb v_preload_cb);
+extern bool ff2_media_init(ff2_media_t *media,
+		const char *path,
+		const char *format,
+		void *opaque,
+		ff2_video_cb v_cb,
+		ff2_audio_cb a_cb,
+		ff2_stop_cb stop_cb,
+		ff2_video_cb v_preload_cb,
+		bool hardware_decoding,
+		enum video_range_type force_range);
 extern void ff2_media_free(ff2_media_t *media);
 
 extern void ff2_media_play(ff2_media_t *media, bool loop);

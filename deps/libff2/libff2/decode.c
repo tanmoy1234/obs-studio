@@ -17,7 +17,60 @@
 #include "decode.h"
 #include "media.h"
 
-extern bool ff2_decode_init(ff2_media_t *m, enum AVMediaType type)
+static AVCodec *find_hardware_decoder(enum AVCodecID id)
+{
+	AVHWAccel *hwa = av_hwaccel_next(NULL);
+	AVCodec *c = NULL;
+
+	while (hwa) {
+		if (hwa->id == id) {
+			if (hwa->pix_fmt == AV_PIX_FMT_VDA_VLD ||
+			    hwa->pix_fmt == AV_PIX_FMT_DXVA2_VLD ||
+			    hwa->pix_fmt == AV_PIX_FMT_VAAPI_VLD) {
+				c = avcodec_find_decoder_by_name(hwa->name);
+				if (c)
+					break;
+			}
+		}
+
+		hwa = av_hwaccel_next(hwa);
+	}
+
+	return c;
+}
+
+static int ff2_open_codec(struct ff2_decode *d)
+{
+	AVCodecContext *c = avcodec_alloc_context3(d->codec);
+	if (!c) {
+		blog(LOG_WARNING, "FF2: Failed to allocate context");
+		return -1;
+	}
+
+	int ret = avcodec_parameters_to_context(c, d->stream->codecpar);
+	if (ret < 0) {
+		avcodec_close(c);
+		return ret;
+	}
+
+	if (c->thread_count == 1 &&
+	    c->codec_id != AV_CODEC_ID_PNG &&
+	    c->codec_id != AV_CODEC_ID_TIFF &&
+	    c->codec_id != AV_CODEC_ID_JPEG2000 &&
+	    c->codec_id != AV_CODEC_ID_MPEG4 &&
+	    c->codec_id != AV_CODEC_ID_WEBP)
+		c->thread_count = 0;
+
+	ret = avcodec_open2(c, d->codec, NULL);
+	if (ret < 0)
+		avcodec_close(c);
+	else
+		d->decoder = c;
+
+	return ret;
+}
+
+bool ff2_decode_init(ff2_media_t *m, enum AVMediaType type, bool hw)
 {
 	struct ff2_decode *d = type == AVMEDIA_TYPE_VIDEO ? &m->v : &m->a;
 	AVStream *stream;
@@ -32,56 +85,44 @@ extern bool ff2_decode_init(ff2_media_t *m, enum AVMediaType type)
 		return false;
 	stream = d->stream = m->fmt->streams[ret];
 
-	if (stream->codecpar->codec_id == AV_CODEC_ID_VP8)
-		d->codec = avcodec_find_decoder_by_name("libvpx");
-	else if (stream->codecpar->codec_id == AV_CODEC_ID_VP9)
-		d->codec = avcodec_find_decoder_by_name("libvpx-vp9");
+	if (hw) {
+		d->codec = find_hardware_decoder(stream->codecpar->codec_id);
+		if (d->codec) {
+			ret = ff2_open_codec(d);
+			if (ret < 0)
+				d->codec = NULL;
+		}
+	}
 
-	if (!d->codec)
-		d->codec = avcodec_find_decoder(stream->codecpar->codec_id);
 	if (!d->codec) {
-		blog(LOG_WARNING, "FF2: Failed to find %s codec",
-				av_get_media_type_string(type));
-		return false;
-	}
+		if (stream->codecpar->codec_id == AV_CODEC_ID_VP8)
+			d->codec = avcodec_find_decoder_by_name("libvpx");
+		else if (stream->codecpar->codec_id == AV_CODEC_ID_VP9)
+			d->codec = avcodec_find_decoder_by_name("libvpx-vp9");
 
-	d->decoder = avcodec_alloc_context3(d->codec);
-	if (!d->decoder) {
-		blog(LOG_WARNING, "FF2: Failed to allocate %s context",
-				av_get_media_type_string(type));
-		return false;
-	}
+		if (!d->codec)
+			d->codec = avcodec_find_decoder(
+					stream->codecpar->codec_id);
+		if (!d->codec) {
+			blog(LOG_WARNING, "FF2: Failed to find %s codec",
+					av_get_media_type_string(type));
+			return false;
+		}
 
-	ret = avcodec_parameters_to_context(d->decoder,
-			d->stream->codecpar);
-	if (ret < 0) {
-		blog(LOG_WARNING, "FF2: Failed to copy %s codec params: %s",
-				av_get_media_type_string(type),
-				av_err2str(ret));
-		return false;
-	}
-
-	if (d->decoder->thread_count == 1 &&
-	    d->decoder->codec_id != AV_CODEC_ID_PNG &&
-	    d->decoder->codec_id != AV_CODEC_ID_TIFF &&
-	    d->decoder->codec_id != AV_CODEC_ID_JPEG2000 &&
-	    d->decoder->codec_id != AV_CODEC_ID_MPEG4 &&
-	    d->decoder->codec_id != AV_CODEC_ID_WEBP)
-		d->decoder->thread_count = 0;
-
-	ret = avcodec_open2(d->decoder, d->codec, NULL);
-	if (ret < 0) {
-		blog(LOG_WARNING, "FF2: Failed to open %s decoder: %s",
-				av_get_media_type_string(type),
-				av_err2str(ret));
-		return false;
+		ret = ff2_open_codec(d);
+		if (ret < 0) {
+			blog(LOG_WARNING, "FF2: Failed to open %s decoder: %s",
+					av_get_media_type_string(type),
+					av_err2str(ret));
+			return false;
+		}
 	}
 
 	d->frame = av_frame_alloc();
 	if (!d->frame) {
 		blog(LOG_WARNING, "FF2: Failed to allocate %s frame",
 				av_get_media_type_string(type));
-		return -1;
+		return false;
 	}
 
 	if (d->codec->capabilities & CODEC_CAP_TRUNCATED)
@@ -119,10 +160,9 @@ void ff2_decode_free(struct ff2_decode *d)
 	memset(d, 0, sizeof(*d));
 }
 
-bool ff2_decode_push_packet(struct ff2_decode *decode, AVPacket *packet)
+void ff2_decode_push_packet(struct ff2_decode *decode, AVPacket *packet)
 {
 	circlebuf_push_back(&decode->packets, packet, sizeof(*packet));
-	return true;
 }
 
 static inline int64_t get_estimated_duration(struct ff2_decode *d,

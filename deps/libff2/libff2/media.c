@@ -329,7 +329,9 @@ static void ff2_media_next_video(ff2_media_t *m, bool preload)
 
 	new_format = convert_pixel_format(m->scale_format);
 	new_space  = convert_color_space(f->colorspace);
-	new_range  = convert_color_range(f->color_range);
+	new_range  = m->force_range == VIDEO_RANGE_DEFAULT
+		? convert_color_range(f->color_range)
+		: m->force_range;
 
 	if (new_format != frame->format ||
 	    new_space  != m->cur_space  ||
@@ -386,12 +388,12 @@ static bool ff2_media_reset(ff2_media_t *m)
 		seek_flags = AVSEEK_FLAG_BACKWARD;
 	}
 
-	if (m->has_audio) {
+	if (m->has_audio && !m->is_network) {
 		if (!ff2_media_seek_stream(m, &m->a, seek_pos, seek_flags)) {
 			return false;
 		}
 	}
-	if (m->has_video) {
+	if (m->has_video && !m->is_network) {
 		if (!ff2_media_seek_stream(m, &m->v, seek_pos, seek_flags)) {
 			return false;
 		}
@@ -412,7 +414,7 @@ static bool ff2_media_reset(ff2_media_t *m)
 	m->stopping = false;
 	pthread_mutex_unlock(&m->mutex);
 
-	if (!active && m->v_preload_cb)
+	if (!active && !m->is_network && m->v_preload_cb)
 		ff2_media_next_video(m, true);
 	if (stopping && m->stop_cb)
 		m->stop_cb(m->opaque);
@@ -430,8 +432,14 @@ static inline void ff2_media_sleepto(ff2_media_t *m)
 static inline void ff2_media_calc_next_ns(ff2_media_t *m)
 {
 	int64_t min_next_ns = ff2_media_get_next_min_pts(m);
+	if (!m->next_pts_ns)
+		m->next_pts_ns = min_next_ns;
+
 	int64_t delta = min_next_ns - m->next_pts_ns;
-	assert(delta > 0);
+	assert(delta >= 0);
+	if (delta > 3000000000)
+		delta = 0;
+
 	m->next_ns += delta;
 	m->next_pts_ns = min_next_ns;
 }
@@ -517,8 +525,13 @@ static void *ff2_media_thread(void *opaque)
 	return NULL;
 }
 
-static inline bool ff2_media_init_internal(ff2_media_t *m, const char *path)
+static inline bool ff2_media_init_internal(ff2_media_t *m,
+		const char *path,
+		const char *format_name,
+		bool hw)
 {
+	AVInputFormat *format = NULL;
+
 	if (pthread_mutex_init(&m->mutex, NULL) != 0) {
 		blog(LOG_WARNING, "FF2: Failed to init mutex");
 		return false;
@@ -528,7 +541,13 @@ static inline bool ff2_media_init_internal(ff2_media_t *m, const char *path)
 		return false;
 	}
 
-	int ret = avformat_open_input(&m->fmt, path, NULL, NULL);
+	if (format_name && *format_name) {
+		format = av_find_input_format(format_name);
+		if (!format)
+			blog(LOG_INFO, "FF2: Unable to find input format '%s'");
+	}
+
+	int ret = avformat_open_input(&m->fmt, path, format, NULL);
 	if (ret < 0) {
 		blog(LOG_WARNING, "FF2: Failed to open media: '%s'", path);
 		return false;
@@ -540,8 +559,8 @@ static inline bool ff2_media_init_internal(ff2_media_t *m, const char *path)
 		return false;
 	}
 
-	m->has_video = ff2_decode_init(m, AVMEDIA_TYPE_VIDEO);
-	m->has_audio = ff2_decode_init(m, AVMEDIA_TYPE_AUDIO);
+	m->has_video = ff2_decode_init(m, AVMEDIA_TYPE_VIDEO, hw);
+	m->has_audio = ff2_decode_init(m, AVMEDIA_TYPE_AUDIO, hw);
 
 	if (!m->has_video && !m->has_audio) {
 		blog(LOG_WARNING, "FF2: Could not initialize audio or video: "
@@ -558,9 +577,16 @@ static inline bool ff2_media_init_internal(ff2_media_t *m, const char *path)
 	return true;
 }
 
-bool ff2_media_init(ff2_media_t *media, const char *path,
-		void *opaque, ff2_video_cb v_cb, ff2_audio_cb a_cb,
-		ff2_stop_cb stop_cb, ff2_video_cb v_preload_cb)
+bool ff2_media_init(ff2_media_t *media,
+		const char *path,
+		const char *format,
+		void *opaque,
+		ff2_video_cb v_cb,
+		ff2_audio_cb a_cb,
+		ff2_stop_cb stop_cb,
+		ff2_video_cb v_preload_cb,
+		bool hw_decoding,
+		enum video_range_type force_range)
 {
 	memset(media, 0, sizeof(*media));
 	pthread_mutex_init_value(&media->mutex);
@@ -569,11 +595,17 @@ bool ff2_media_init(ff2_media_t *media, const char *path,
 	media->a_cb = a_cb;
 	media->stop_cb = stop_cb;
 	media->v_preload_cb = v_preload_cb;
+	media->force_range = force_range;
+
+	if (path && *path)
+		media->is_network = !!strstr(path, "://");
+
+	avformat_network_init();
 
 	if (!base_sys_ts)
 		base_sys_ts = (int64_t)os_gettime_ns();
 
-	if (!ff2_media_init_internal(media, path)) {
+	if (!ff2_media_init_internal(media, path, format, hw_decoding)) {
 		ff2_media_free(media);
 		return false;
 	}
