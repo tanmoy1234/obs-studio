@@ -210,11 +210,17 @@ bool ff2_decode_next(struct ff2_decode *d)
 	if (d->frame_ready) {
 		int64_t last_pts = d->frame_pts;
 
-		d->frame_pts = av_rescale_q(d->frame->pts,
+		d->frame_pts = av_rescale_q(d->frame->best_effort_timestamp,
 				d->stream->time_base,
 				(AVRational){1, 1000000000});
 
-		int64_t duration = get_estimated_duration(d, last_pts);
+		int64_t duration = d->frame->pkt_duration;
+		if (!duration)
+			duration = get_estimated_duration(d, last_pts);
+		else
+			duration = av_rescale_q(duration,
+					d->stream->time_base,
+					(AVRational){1, 1000000000});
 		d->last_duration = duration;
 		d->next_pts = d->frame_pts + duration;
 	}
