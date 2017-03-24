@@ -397,6 +397,8 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 				s, get_frame, get_audio, media_stopped,
 				preload_frame);
 
+	obs_source_set_flags(s->source, OBS_SOURCE_FLAG_UNBUFFERED);
+
 	dump_source_info(s, input, input_format, is_advanced);
 	if (!s->restart_on_activate || obs_source_active(s->source))
 		ffmpeg_source_start(s);
